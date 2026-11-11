@@ -13,6 +13,8 @@ Two people swipe on nearby restaurants. The first place you both say yes to is d
 
 ## Deploy
 
+Live at https://chicken-tinder-4qw6.onrender.com, auto-deployed from `main`.
+
 `render.yaml` describes a single free Render web service. Push this folder to a Git repo and open
 `https://dashboard.render.com/blueprint/new?repo=<your repo URL>`.
 
