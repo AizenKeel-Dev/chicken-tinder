@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: chicken-tinder
+    runtime: node
+    plan: free
+    buildCommand: "true"
+    startCommand: node server.js
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: CONTACT_UA
+        sync: false   # e.g. "ChickenTinder/1.0 (you@example.com)"; OpenStreetMap asks for a contact in the User-Agent

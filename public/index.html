@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Chicken Tinder</title>
+<meta name="description" content="You both swipe on nearby restaurants. The first place you both say yes to is dinner.">
+<meta name="theme-color" content="#F7C531" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#1D1730" media="(prefers-color-scheme: dark)">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Chicken Tinder">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bagel+Fat+One&family=Figtree:wght@400;600;800&display=swap">
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Chicken <span>Tinder</span></h1>
+    <p class="muted">You both swipe. The first place you both say yes to is dinner.</p>
+  </header>
+  <div class="notice" id="notice" role="status" hidden></div>
+
+  <main id="home" hidden>
+    <form class="panel" id="startform" autocomplete="off" novalidate>
+      <h2>Start a round</h2>
+      <fieldset>
+        <legend>Where are you?</legend>
+        <button type="button" id="locate">Use my current location</button>
+        <label for="address">Or type an address
+          <input id="address" name="address" maxlength="200" placeholder="Street, city, state" autocomplete="street-address" enterkeyhint="go">
+        </label>
+      </fieldset>
+      <fieldset>
+        <legend>How far will you drive?</legend>
+        <div class="radii" id="radii">
+          <button type="button" data-r="2" aria-pressed="false">2 mi</button>
+          <button type="button" data-r="5" aria-pressed="true">5 mi</button>
+          <button type="button" data-r="10" aria-pressed="false">10 mi</button>
+          <button type="button" data-r="15" aria-pressed="false">15 mi</button>
+        </div>
+      </fieldset>
+      <label class="check" for="fast"><input type="checkbox" id="fast"> Include fast food</label>
+      <label for="name">Your name (optional)
+        <input id="name" name="name" maxlength="20" autocomplete="given-name">
+      </label>
+      <button class="primary" type="submit" id="start">Find restaurants and start</button>
+    </form>
+    <form class="panel" id="joinform" autocomplete="off" novalidate>
+      <h2>Join a round</h2>
+      <label for="code">Round code
+        <input id="code" name="code" maxlength="4" autocapitalize="characters" autocorrect="off" spellcheck="false" placeholder="ABCD">
+      </label>
+      <button type="submit">Join round</button>
+    </form>
+    <p class="muted">Restaurant data © OpenStreetMap contributors. Your location is used once to find restaurants and is not saved.</p>
+  </main>
+
+  <main id="round" hidden>
+    <div class="invite">
+      <div><span class="muted">Round code</span><strong id="roundcode"></strong></div>
+      <button type="button" id="share">Send invite link</button>
+    </div>
+    <p class="muted linktext" id="linktext" hidden></p>
+    <div class="people" id="people"></div>
+    <div id="stage"></div>
+    <section id="matches" hidden></section>
+  </main>
+</div>
+
+<div class="match" id="match" hidden role="dialog" aria-modal="true" aria-labelledby="m-name">
+  <p class="eyebrow">It's a match. Dinner is at</p>
+  <p class="big" id="m-name"></p>
+  <p id="m-sub"></p>
+  <a class="btn solid" id="m-map" target="_blank" rel="noopener">Open in Maps</a>
+  <button type="button" id="m-close">Keep swiping</button>
+</div>
+<script src="/app.js"></script>
+</body>
+</html>

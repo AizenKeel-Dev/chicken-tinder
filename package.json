@@ -1,0 +1,9 @@
+{
+  "name": "chicken-tinder",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Two people swipe on restaurants; the first mutual yes is dinner.",
+  "main": "server.js",
+  "scripts": { "start": "node server.js" },
+  "engines": { "node": ">=18" }
+}
