@@ -27,6 +27,11 @@ const DECK_SIZE = 60;
 const OVERPASS_WAIT = 12000;             // ms to wait on the Overpass mirrors before falling back
 const KIND_LABEL = { restaurant: 'Restaurant', fast_food: 'Fast food', pub: 'Pub', bar: 'Bar', cafe: 'Cafe' };
 const NOMINATIM_GAP = 1100;              // ms between Nominatim calls (their policy: one request per second)
+const NOMINATIM_BACKOFF = 5 * 60 * 1000; // after a 429, skip Nominatim this long so the other sources answer at once
+const PHOTON = process.env.PHOTON_URL || 'https://photon.komoot.io/api/';
+const PHOTON_GAP = 700;                  // ms between Photon calls; bursts get an HTML error page back
+const CACHE_TTL = 6 * 60 * 60 * 1000;    // raw lookup results are reused this long, so retries and nearby rounds skip upstream
+const CACHE_MAX = 100;
 const CREATES_PER_HOUR = 20;             // per IP; each create calls OpenStreetMap services
 const ALPHA = 'ABCDEFGHJKMNPQRSTUVWXYZ'; // no I, L, O
 
@@ -46,6 +51,18 @@ function sweep() {
   const now = Date.now();
   for (const [c, r] of rounds) if (now - r.touched > ROUND_TTL) rounds.delete(c);
   for (const [ip, ts] of creates) { const keep = ts.filter(t => now - t < 3600e3); keep.length ? creates.set(ip, keep) : creates.delete(ip); }
+  for (const [k, v] of cache) if (now - v.at > CACHE_TTL) cache.delete(k);
+}
+// Memory-only cache of upstream answers (geocodes and raw place lists). Never written anywhere.
+const cache = new Map();
+function remember(key, value) {
+  if (cache.size >= CACHE_MAX) cache.delete(cache.keys().next().value);
+  cache.set(key, { at: Date.now(), value });
+  return value;
+}
+function recall(key) {
+  const hit = cache.get(key);
+  return hit && Date.now() - hit.at < CACHE_TTL ? hit.value : undefined;
 }
 setInterval(sweep, 10 * 60 * 1000).unref();
 
@@ -67,38 +84,57 @@ async function getJson(url, opts, ms) {
 }
 
 // Every Nominatim call goes through here so the whole server stays under one request per second.
-let nominatimAt = 0;
+// Render's shared egress IPs can exhaust Nominatim's per-IP allowance; a 429 pauses it for a while.
+let nominatimAt = 0, nominatimPausedUntil = 0;
 async function nominatim(query) {
+  if (Date.now() < nominatimPausedUntil) throw new Error('nominatim paused after 429');
   const wait = nominatimAt + NOMINATIM_GAP - Date.now();
   if (wait > 0) await new Promise(r => setTimeout(r, wait));
   nominatimAt = Date.now();
-  return getJson(NOMINATIM + '?format=jsonv2&' + query);
+  try { return await getJson(NOMINATIM + '?format=jsonv2&' + query); }
+  catch (e) { if (e && e.message === 'upstream 429') nominatimPausedUntil = Date.now() + NOMINATIM_BACKOFF; throw e; }
 }
+// Photon (komoot's OpenStreetMap geocoder) is the last resort for both addresses and places.
+let photonAt = 0;
+async function photon(query) {
+  const wait = photonAt + PHOTON_GAP - Date.now();
+  if (wait > 0) await new Promise(r => setTimeout(r, wait));
+  photonAt = Date.now();
+  const data = await getJson(PHOTON + '?' + query);
+  if (!data || !Array.isArray(data.features)) throw new Error('bad photon reply');
+  return data.features;
+}
+const photonPoint = f => f && f.geometry && Array.isArray(f.geometry.coordinates) ? { lat: Number(f.geometry.coordinates[1]), lon: Number(f.geometry.coordinates[0]) } : null;
 
 // `where` is either a free-form string or {street, city, state, zip}. Structured parts go to Nominatim's
 // structured search first (more exact than free text), then as one free-form line if that finds nothing.
 async function geocode(where) {
-  const queries = [];
-  if (typeof where === 'string') queries.push('limit=1&q=' + encodeURIComponent(where));
-  else {
+  const line = typeof where === 'string' ? where
+    : [where.street, where.city, [where.state, where.zip].filter(Boolean).join(' ')].filter(Boolean).join(', ');
+  const cacheKey = 'geo|' + line.toLowerCase().replace(/\s+/g, ' ');
+  const cached = recall(cacheKey);
+  if (cached) return cached;
+  const attempts = [];
+  const us = typeof where !== 'string' && /^\d{5}(-\d{4})?$/.test(where.zip);   // a bare US ZIP otherwise matches postcodes abroad
+  if (typeof where !== 'string') {
     const p = new URLSearchParams({ limit: '1' });
     if (where.street) p.set('street', where.street);
     if (where.city) p.set('city', where.city);
     if (where.state) p.set('state', where.state);
     if (where.zip) p.set('postalcode', where.zip);
-    if (/^\d{5}(-\d{4})?$/.test(where.zip)) p.set('countrycodes', 'us');   // a bare US ZIP otherwise matches postcodes abroad
-    queries.push(p.toString());
-    const line = [where.street, where.city, [where.state, where.zip].filter(Boolean).join(' ')].filter(Boolean).join(', ');
-    queries.push('limit=1&q=' + encodeURIComponent(line) + (p.has('countrycodes') ? '&countrycodes=us' : ''));
+    if (us) p.set('countrycodes', 'us');
+    attempts.push(() => nominatim(p.toString()));
   }
+  attempts.push(() => nominatim('limit=1&q=' + encodeURIComponent(line) + (us ? '&countrycodes=us' : '')));
+  attempts.push(async () => { const f = await photon('limit=1&q=' + encodeURIComponent(line)); return f.map(photonPoint); });
   let answered = false;
-  for (const q of queries) {
+  for (const attempt of attempts) {
     let hits;
-    try { hits = await nominatim(q); } catch (e) { continue; }
+    try { hits = await attempt(); } catch (e) { continue; }
     answered = true;
     const h = Array.isArray(hits) && hits[0];
     const lat = h && Number(h.lat), lon = h && Number(h.lon);
-    if (h && Number.isFinite(lat) && Number.isFinite(lon)) return { lat, lon };
+    if (h && Number.isFinite(lat) && Number.isFinite(lon)) return remember(cacheKey, { lat, lon });
   }
   if (!answered) throw new Problem(502, "The address lookup isn't answering. Try again, or use your location instead.");
   throw new Problem(400, "Couldn't find that address. Check the city, state and ZIP, or use your location.");
@@ -169,13 +205,50 @@ async function nominatimElements(center, radiusMi, kinds) {
   return answered ? elements : null;
 }
 
+// Last resort: Photon only searches by words in a name, so each place type is asked for with several
+// common words and the hits are merged. Thinner than Overpass, but it works when the others are out.
+const PHOTON_TERMS = {
+  restaurant: ['restaurant', 'grill', 'pizza', 'mexican', 'chinese', 'kitchen', 'sushi', 'taco', 'italian', 'cafe'],
+  pub: ['pub', 'tavern', 'brewing'],
+  fast_food: ['burger', 'chicken', 'subs', 'wings', 'pizza'],
+  cafe: ['cafe', 'coffee', 'bakery'],
+  bar: ['bar', 'tavern', 'lounge'],
+};
+async function photonElements(center, radiusMi, kinds) {
+  const dLat = radiusMi / 69, dLon = radiusMi / (69 * Math.cos(center.lat * Math.PI / 180));
+  const bbox = [center.lon - dLon, center.lat - dLat, center.lon + dLon, center.lat + dLat].map(n => n.toFixed(5)).join(',');
+  let answered = false;
+  const elements = [];
+  for (const amenity of kinds) for (const term of PHOTON_TERMS[amenity] || [amenity]) {
+    let hits;
+    try { hits = await photon('limit=50&q=' + encodeURIComponent(term) + '&osm_tag=amenity:' + amenity + '&lat=' + center.lat.toFixed(5) + '&lon=' + center.lon.toFixed(5) + '&bbox=' + bbox); }
+    catch (e) { continue; }
+    answered = true;
+    for (const f of hits) {
+      const p = f.properties || {}, pt = photonPoint(f);
+      if (!pt) continue;
+      elements.push({ type: String(p.osm_type || 'x').toLowerCase(), id: p.osm_id, lat: pt.lat, lon: pt.lon, tags: {
+        name: p.name, amenity, 'addr:housenumber': p.housenumber, 'addr:street': p.street, 'addr:city': p.city,
+      } });
+    }
+  }
+  return answered ? elements : null;
+}
+
 async function nearby(center, radiusMi, opts) {
   const meters = Math.round(radiusMi * 1609.344);
   const kinds = kindsFor(opts);
-  const q = `[out:json][timeout:10];nwr(around:${meters},${center.lat.toFixed(5)},${center.lon.toFixed(5)})["amenity"~"^(${kinds.join('|')})$"]["name"];out center tags 900;`;
-  let elements = await overpassElements(q);
-  if (!elements) elements = await nominatimElements(center, radiusMi, kinds);
-  if (!elements) throw new Problem(502, 'The restaurant lookup is busy right now. Try again in a moment.');
+  // Raw answers are cached by a ~0.7 mile cell, radius and place types; distances below are always from the real center.
+  const cacheKey = ['near', kinds.join('+'), radiusMi, center.lat.toFixed(2), center.lon.toFixed(2)].join('|');
+  let elements = recall(cacheKey);
+  if (!elements) {
+    const q = `[out:json][timeout:10];nwr(around:${meters},${center.lat.toFixed(5)},${center.lon.toFixed(5)})["amenity"~"^(${kinds.join('|')})$"]["name"];out center tags 900;`;
+    elements = await overpassElements(q);
+    if (!elements) elements = await nominatimElements(center, radiusMi, kinds);
+    if (!elements) elements = await photonElements(center, radiusMi, kinds);
+    if (!elements) throw new Problem(502, 'The restaurant lookup is busy right now. Try again in a moment.');
+    remember(cacheKey, elements);
+  }
   // One card per restaurant name: chains like Waffle House show up once, at their closest location.
   const best = new Map();
   for (const el of elements) {

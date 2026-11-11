@@ -12,7 +12,10 @@ Two people swipe on nearby restaurants; the first mutual yes is dinner. Built in
 - Restaurants: Nominatim geocodes a typed address; Overpass lists `amenity=restaurant|pub` (plus `fast_food` and `cafe|bar` behind two toggles) within 1 to 15 miles. Up to 60 per round, shuffled.
   - All Overpass mirrors are queried at once (first good answer wins, 12 s cap). If none answers, the server falls back to Nominatim's bounded amenity search (50 per query per type; when a type hits that cap a 3-mile box is searched too, so the nearest places are always in), reshaped to look like Overpass elements so one parser serves both.
   - One card per restaurant name (lowercased, punctuation and trailing store numbers stripped), keeping the closest location, so chains show up once.
-  - Every Nominatim call goes through `nominatim()`, which keeps the whole server under one request per second (their usage policy).
+  - If Nominatim fails too, Photon (photon.komoot.io) is the last resort for both geocoding and places: it only matches words in names, so each place type is queried with several common words and merged. Thin but it works.
+  - Every Nominatim call goes through `nominatim()`, which keeps the whole server under one request per second (their usage policy). A 429 pauses Nominatim for 5 minutes so the fallbacks answer at once. Render's free tier shares egress IPs, so 429s from Nominatim happen regardless of this app's own rate.
+  - Raw geocode and place-list answers are cached in memory (6 h, 100 entries, keyed by a ~0.7 mi cell + radius + types) so retries and nearby rounds skip upstream entirely.
+  - Upstream failures are logged as host + error kind only (never the query).
 - Privacy rules to keep: the round's center point never leaves the server, players see only their own picks plus mutual matches, nothing is logged or written to disk.
 
 ## Verified (2026-11-11)
@@ -33,4 +36,4 @@ Two people swipe on nearby restaurants; the first mutual yes is dinner. Built in
 
 ## Local test
     node server.js   # http://localhost:3000
-Env overrides for mocking: `NOMINATIM_URL`, `OVERPASS_URLS` (comma-separated). Point `OVERPASS_URLS` at a dead port (e.g. `http://127.0.0.1:9`) to exercise the Nominatim fallback.
+Env overrides for mocking: `NOMINATIM_URL`, `OVERPASS_URLS` (comma-separated), `PHOTON_URL`. Point `OVERPASS_URLS` at a dead port (e.g. `http://127.0.0.1:9`) to exercise the Nominatim fallback; also point `NOMINATIM_URL` at one to exercise Photon.
