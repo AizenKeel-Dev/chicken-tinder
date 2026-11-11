@@ -8,7 +8,8 @@ Two people swipe on nearby restaurants; the first mutual yes is dinner. Built in
 - `render.yaml`: one free Render web service, health check at `/healthz`. `CONTACT_UA` is prompted for at blueprint creation.
 - Deployed: https://chicken-tinder-4qw6.onrender.com (Render Blueprint `chicken-tinder`, auto-syncs on push to main). Source: https://github.com/AizenKeel-Dev/chicken-tinder (public).
 - Restaurants: Nominatim geocodes a typed address; Overpass lists `amenity=restaurant` (optionally `fast_food`) within 1 to 15 miles. Up to 40 per round.
-  - All Overpass mirrors are queried at once (first good answer wins, 18 s cap). If none answers, the server falls back to Nominatim's bounded amenity search (50 per kind), reshaped to look like Overpass elements so one parser serves both.
+  - All Overpass mirrors are queried at once (first good answer wins, 18 s cap). If none answers, the server falls back to Nominatim's bounded amenity search (50 per query; a 3-mile box first, then the full radius, so the nearest places are always in), reshaped to look like Overpass elements so one parser serves both.
+  - One card per restaurant name (lowercased, punctuation and trailing store numbers stripped), keeping the closest location, so chains show up once.
   - Every Nominatim call goes through `nominatim()`, which keeps the whole server under one request per second (their usage policy).
 - Privacy rules to keep: the round's center point never leaves the server, players see only their own picks plus mutual matches, nothing is logged or written to disk.
 

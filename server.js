@@ -108,14 +108,16 @@ async function overpassElements(q) {
   finally { ctl.abort(); }
 }
 
-// Fallback when Overpass is down: Nominatim's bounded amenity search. Thinner (50 per kind) but it keeps the app usable.
+// Fallback when Overpass is down: Nominatim's bounded amenity search. Thinner (50 per query) but it keeps the app usable.
+// Nominatim picks an arbitrary 50 from a big box, so a tight box is searched first to make sure the nearest places are in.
 // Results are reshaped to look like Overpass elements so one parser serves both.
 async function nominatimElements(center, radiusMi, fastFood) {
-  const dLat = radiusMi / 69, dLon = radiusMi / (69 * Math.cos(center.lat * Math.PI / 180));
-  const viewbox = [center.lon - dLon, center.lat + dLat, center.lon + dLon, center.lat - dLat].map(n => n.toFixed(5)).join(',');
+  const rings = radiusMi > 4 ? [3, radiusMi] : [radiusMi];
   let answered = false;
   const elements = [];
-  for (const amenity of fastFood ? ['restaurant', 'fast_food'] : ['restaurant']) {
+  for (const amenity of fastFood ? ['restaurant', 'fast_food'] : ['restaurant']) for (const ring of rings) {
+    const dLat = ring / 69, dLon = ring / (69 * Math.cos(center.lat * Math.PI / 180));
+    const viewbox = [center.lon - dLon, center.lat + dLat, center.lon + dLon, center.lat - dLat].map(n => n.toFixed(5)).join(',');
     let hits;
     try { hits = await nominatim('limit=50&extratags=1&addressdetails=1&bounded=1&amenity=' + amenity + '&viewbox=' + viewbox); }
     catch (e) { continue; }
@@ -139,7 +141,8 @@ async function nearby(center, radiusMi, fastFood) {
   let elements = await overpassElements(q);
   if (!elements) elements = await nominatimElements(center, radiusMi, fastFood);
   if (!elements) throw new Problem(502, 'The restaurant lookup is busy right now. Try again in a moment.');
-  const seen = new Set(), out = [];
+  // One card per restaurant name: chains like Waffle House show up once, at their closest location.
+  const best = new Map();
   for (const el of elements) {
     const tags = el.tags || {};
     const lat = Number(el.lat ?? (el.center && el.center.lat)), lon = Number(el.lon ?? (el.center && el.center.lon));
@@ -147,11 +150,11 @@ async function nearby(center, radiusMi, fastFood) {
     if (!name || !Number.isFinite(lat) || !Number.isFinite(lon)) continue;
     const miles = milesBetween(center, { lat, lon });
     if (miles > radiusMi + 0.05) continue;
-    const key = name.toLowerCase() + '|' + lat.toFixed(3) + '|' + lon.toFixed(3);
-    if (seen.has(key)) continue;
-    seen.add(key);
+    const key = name.toLowerCase().replace(/\s*#\s*\d+\s*$/, '').replace(/[^a-z0-9]+/g, ' ').trim();
+    const prior = best.get(key);
+    if (prior && prior.miles <= Math.round(miles * 10) / 10) continue;
     const street = [text(tags['addr:housenumber'], 12), text(tags['addr:street'], 60)].filter(Boolean).join(' ');
-    out.push({
+    best.set(key, {
       id: String(el.type || 'x')[0] + String(el.id),
       name, cuisine: cuisineOf(tags),
       miles: Math.round(miles * 10) / 10,
@@ -159,7 +162,7 @@ async function nearby(center, radiusMi, fastFood) {
       lat: Math.round(lat * 1e5) / 1e5, lon: Math.round(lon * 1e5) / 1e5,
     });
   }
-  return out;
+  return [...best.values()];
 }
 
 const validPid = p => typeof p === 'string' && /^[a-z0-9]{12,40}$/.test(p);
