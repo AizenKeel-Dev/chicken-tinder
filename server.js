@@ -285,7 +285,8 @@ const server = http.createServer(async (req, res) => {
       const [file, type] = STATIC[p];
       return send(res, 200, fs.readFileSync(path.join(PUBLIC, file)), type);
     }
-    if (req.method === 'GET' && p === '/healthz') return send(res, 200, { ok: true });
+    // The commit lets a deploy be confirmed without starting rounds, which count against the per-IP limit.
+    if (req.method === 'GET' && p === '/healthz') return send(res, 200, { ok: true, commit: (process.env.RENDER_GIT_COMMIT || '').slice(0, 7) || null });
     if (req.method === 'POST' && p === '/api/rounds') return await createRound(req, res);
 
     const m = p.match(/^\/api\/rounds\/([A-Za-z]{4})(\/join|\/swipe)?$/);

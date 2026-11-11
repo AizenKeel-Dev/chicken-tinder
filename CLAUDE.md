@@ -28,6 +28,9 @@ Two people swipe on nearby restaurants; the first mutual yes is dinner. Built in
 ## To do
 1. Re-test location accuracy and address autofill on a phone after the next deploy.
 
+## Verifying a deploy
+`GET /healthz` returns `{ok, commit}` with the short git SHA Render built. Use that to confirm a deploy landed. Do NOT poll by creating rounds: every `POST /api/rounds` counts against the 20-per-hour-per-IP limit, even when it fails, and a Render restart is the only quick reset (the counter is in memory).
+
 ## Local test
     node server.js   # http://localhost:3000
 Env overrides for mocking: `NOMINATIM_URL`, `OVERPASS_URLS` (comma-separated). Point `OVERPASS_URLS` at a dead port (e.g. `http://127.0.0.1:9`) to exercise the Nominatim fallback.
