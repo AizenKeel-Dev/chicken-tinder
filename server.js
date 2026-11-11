@@ -59,6 +59,10 @@ async function getJson(url, opts, ms) {
     const r = await fetch(url, { ...opts, signal, headers: { 'User-Agent': USER_AGENT, Accept: 'application/json', ...(opts && opts.headers) } });
     if (!r.ok) throw new Error('upstream ' + r.status);
     return await r.json();
+  } catch (e) {
+    // Only the host and the failure kind are logged: never the query, which could carry a location.
+    console.error('upstream failed:', new URL(url).host, (e && e.message) || e, e && e.cause && e.cause.code || '');
+    throw e;
   } finally { clearTimeout(timer); }
 }
 
