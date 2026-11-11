@@ -42,31 +42,44 @@
     document.querySelectorAll('#radii button').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
   });
 
+  const ADDR = ['street', 'city', 'state', 'zip'];
+  const typedAddress = () => Object.fromEntries(ADDR.map(k => [k, $('#' + k).value.trim()]));
   const locBtn = $('#locate');
+  const unsetLoc = () => { S.loc = null; locBtn.disabled = false; locBtn.textContent = 'Use my current location'; locBtn.classList.remove('set'); };
+
+  // Watch for a fix instead of taking the first cached one: phones often hand back a coarse
+  // cell-tower guess first and a GPS reading a few seconds later. Stop early on a good fix.
   locBtn.addEventListener('click', () => {
     if (!navigator.geolocation) { say("This browser can't share location. Type an address instead."); return; }
-    locBtn.disabled = true; locBtn.textContent = 'Finding you…';
-    navigator.geolocation.getCurrentPosition(pos => {
-      S.loc = { lat: pos.coords.latitude, lon: pos.coords.longitude };
-      locBtn.disabled = false; locBtn.textContent = 'Using your current location'; locBtn.classList.add('set');
-      $('#address').value = ''; say('');
-    }, () => {
-      S.loc = null; locBtn.disabled = false; locBtn.textContent = 'Use my current location'; locBtn.classList.remove('set');
-      say("Couldn't get your location. Allow location for this site in Safari, or type an address instead.");
-    }, { enableHighAccuracy: false, timeout: 12000, maximumAge: 300000 });
+    locBtn.disabled = true; locBtn.textContent = 'Finding you…'; say('');
+    let best = null, watch = null, timer = null, done = false;
+    const finish = () => {
+      if (done) return; done = true;
+      clearTimeout(timer); if (watch !== null) navigator.geolocation.clearWatch(watch);
+      if (!best) { unsetLoc(); say("Couldn't get your location. Allow location for this site in Safari, or type an address instead."); return; }
+      const acc = best.coords.accuracy || 0;
+      S.loc = { lat: best.coords.latitude, lon: best.coords.longitude };
+      locBtn.disabled = false; locBtn.classList.add('set');
+      locBtn.textContent = 'Using your current location' + (acc > 500 ? ' (rough fix)' : '');
+      ADDR.forEach(k => { $('#' + k).value = ''; });
+      if (acc > 500) say('Your location fix is only good to about ' + (acc >= 1000 ? (Math.round(acc / 160.9) / 10) + ' mi' : Math.round(acc) + ' m') + '. If the results look off, type an address instead.');
+    };
+    watch = navigator.geolocation.watchPosition(pos => {
+      if (!best || pos.coords.accuracy < best.coords.accuracy) best = pos;
+      if (pos.coords.accuracy <= 100) finish();
+    }, () => finish(), { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 });
+    timer = setTimeout(finish, 9000);
   });
-  $('#address').addEventListener('input', () => {
-    if ($('#address').value.trim() && S.loc) { S.loc = null; locBtn.textContent = 'Use my current location'; locBtn.classList.remove('set'); }
-  });
+  ADDR.forEach(k => $('#' + k).addEventListener('input', () => { if ($('#' + k).value.trim() && S.loc) unsetLoc(); }));
 
   $('#startform').addEventListener('submit', async e => {
     e.preventDefault();
-    const address = $('#address').value.trim();
-    if (!S.loc && address.length < 3) { say('Share your location or type an address first.'); return; }
+    const addr = typedAddress();
+    if (!S.loc && Object.values(addr).join('').length < 3) { say('Share your location or type an address first.'); return; }
     const btn = $('#start'); btn.disabled = true; btn.textContent = 'Finding restaurants…'; say('');
     try {
       const body = { pid, name: myName(), radius: S.radius, fastFood: $('#fast').checked };
-      if (S.loc) { body.lat = S.loc.lat; body.lon = S.loc.lon; } else body.address = address;
+      if (S.loc) { body.lat = S.loc.lat; body.lon = S.loc.lon; } else Object.assign(body, addr);
       enter(await api('POST', '/api/rounds', body));
     } catch (err) { say(err.error); }
     btn.disabled = false; btn.textContent = 'Find restaurants and start';

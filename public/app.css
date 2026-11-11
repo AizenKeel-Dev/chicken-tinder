@@ -43,6 +43,7 @@ label.check{flex-direction:row;align-items:center;gap:10px;font-size:16px}
 label.check input{width:22px;height:22px;flex:none;accent-color:var(--yes)}
 input:not([type=checkbox]){font:16px var(--body);color:var(--ink);background:var(--card);border:2px solid var(--line);border-radius:10px;padding:11px;width:100%;min-width:0;-webkit-appearance:none;appearance:none}
 #code{font:800 22px var(--body);letter-spacing:.3em;text-transform:uppercase;text-align:center}
+.addr-row{display:grid;grid-template-columns:2fr 1fr 1.3fr;gap:8px}
 .radii{display:flex;flex-wrap:wrap;gap:8px}
 .radii button{padding:8px 14px;min-height:40px;font-size:14px;border-radius:99px;width:auto}
 .radii button[aria-pressed="true"],#locate.set{background:var(--ink);color:var(--bg);border-color:var(--ink)}

@@ -70,14 +70,33 @@ async function nominatim(query) {
   return getJson(NOMINATIM + '?format=jsonv2&' + query);
 }
 
-async function geocode(address) {
-  let hits;
-  try { hits = await nominatim('limit=1&q=' + encodeURIComponent(address)); }
-  catch (e) { throw new Problem(502, "The address lookup isn't answering. Try again, or use your location instead."); }
-  const h = Array.isArray(hits) && hits[0];
-  const lat = h && Number(h.lat), lon = h && Number(h.lon);
-  if (!h || !Number.isFinite(lat) || !Number.isFinite(lon)) throw new Problem(400, "Couldn't find that address. Add the city and state, or use your location.");
-  return { lat, lon };
+// `where` is either a free-form string or {street, city, state, zip}. Structured parts go to Nominatim's
+// structured search first (more exact than free text), then as one free-form line if that finds nothing.
+async function geocode(where) {
+  const queries = [];
+  if (typeof where === 'string') queries.push('limit=1&q=' + encodeURIComponent(where));
+  else {
+    const p = new URLSearchParams({ limit: '1' });
+    if (where.street) p.set('street', where.street);
+    if (where.city) p.set('city', where.city);
+    if (where.state) p.set('state', where.state);
+    if (where.zip) p.set('postalcode', where.zip);
+    if (/^\d{5}(-\d{4})?$/.test(where.zip)) p.set('countrycodes', 'us');   // a bare US ZIP otherwise matches postcodes abroad
+    queries.push(p.toString());
+    const line = [where.street, where.city, [where.state, where.zip].filter(Boolean).join(' ')].filter(Boolean).join(', ');
+    queries.push('limit=1&q=' + encodeURIComponent(line) + (p.has('countrycodes') ? '&countrycodes=us' : ''));
+  }
+  let answered = false;
+  for (const q of queries) {
+    let hits;
+    try { hits = await nominatim(q); } catch (e) { continue; }
+    answered = true;
+    const h = Array.isArray(hits) && hits[0];
+    const lat = h && Number(h.lat), lon = h && Number(h.lon);
+    if (h && Number.isFinite(lat) && Number.isFinite(lon)) return { lat, lon };
+  }
+  if (!answered) throw new Problem(502, "The address lookup isn't answering. Try again, or use your location instead.");
+  throw new Problem(400, "Couldn't find that address. Check the city, state and ZIP, or use your location.");
 }
 
 function milesBetween(a, b) {
@@ -230,9 +249,11 @@ async function createRound(req, res) {
   const lat = Number(body.lat), lon = Number(body.lon);
   if (body.lat != null && body.lon != null && Number.isFinite(lat) && Number.isFinite(lon) && Math.abs(lat) <= 90 && Math.abs(lon) <= 180) center = { lat, lon };
   else {
+    const parts = { street: text(body.street, 120), city: text(body.city, 60), state: text(body.state, 30), zip: text(body.zip, 12) };
     const address = text(body.address, 200);
-    if (address.length < 3) throw new Problem(400, 'Share your location or type an address first.');
-    center = await geocode(address);
+    const where = Object.values(parts).some(Boolean) ? parts : address;
+    if ((typeof where === 'string' ? where : Object.values(where).join('')).length < 3) throw new Problem(400, 'Share your location or type an address first.');
+    center = await geocode(where);
   }
   const found = await nearby(center, radius, body.fastFood === true);
   if (!found.length) throw new Problem(400, 'No restaurants turned up within ' + radius + ' miles. Try a wider radius.');

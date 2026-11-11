@@ -22,14 +22,25 @@
   <div class="notice" id="notice" role="status" hidden></div>
 
   <main id="home" hidden>
-    <form class="panel" id="startform" autocomplete="off" novalidate>
+    <form class="panel" id="startform" novalidate>
       <h2>Start a round</h2>
       <fieldset>
         <legend>Where are you?</legend>
         <button type="button" id="locate">Use my current location</button>
-        <label for="address">Or type an address
-          <input id="address" name="address" maxlength="200" placeholder="Street, city, state" autocomplete="street-address" enterkeyhint="go">
+        <label for="street">Or type an address
+          <input id="street" name="street" maxlength="120" placeholder="Street address" autocomplete="address-line1" enterkeyhint="next">
         </label>
+        <div class="addr-row">
+          <label for="city">City
+            <input id="city" name="city" maxlength="60" autocomplete="address-level2" enterkeyhint="next">
+          </label>
+          <label for="state">State
+            <input id="state" name="state" maxlength="30" autocomplete="address-level1" enterkeyhint="next">
+          </label>
+          <label for="zip">ZIP
+            <input id="zip" name="zip" maxlength="12" inputmode="numeric" autocomplete="postal-code" enterkeyhint="go">
+          </label>
+        </div>
       </fieldset>
       <fieldset>
         <legend>How far will you drive?</legend>
