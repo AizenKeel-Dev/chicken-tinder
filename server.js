@@ -23,8 +23,9 @@ const MAX_ROUNDS = 2000;
 const MAX_PLAYERS = 8;
 const MAX_BODY = 2048;
 const MAX_RADIUS_MI = 15;
-const DECK_SIZE = 40;
-const OVERPASS_WAIT = 18000;             // ms to wait on the Overpass mirrors before falling back
+const DECK_SIZE = 60;
+const OVERPASS_WAIT = 12000;             // ms to wait on the Overpass mirrors before falling back
+const KIND_LABEL = { restaurant: 'Restaurant', fast_food: 'Fast food', pub: 'Pub', bar: 'Bar', cafe: 'Cafe' };
 const NOMINATIM_GAP = 1100;              // ms between Nominatim calls (their policy: one request per second)
 const CREATES_PER_HOUR = 20;             // per IP; each create calls OpenStreetMap services
 const ALPHA = 'ABCDEFGHJKMNPQRSTUVWXYZ'; // no I, L, O
@@ -109,7 +110,14 @@ const text = (v, max) => (typeof v === 'string' ? v.replace(/[\u0000-\u001f]/g, 
 function cuisineOf(tags) {
   const c = text(tags.cuisine, 60).split(/[;,]/)[0].replace(/_/g, ' ').trim();
   if (c) return c[0].toUpperCase() + c.slice(1);
-  return tags.amenity === 'fast_food' ? 'Fast food' : 'Restaurant';
+  return KIND_LABEL[tags.amenity] || 'Restaurant';
+}
+// Which OpenStreetMap place types a round includes. Pubs serve dinner, so they come with restaurants.
+function kindsFor(opts) {
+  const kinds = ['restaurant', 'pub'];
+  if (opts.fastFood) kinds.push('fast_food');
+  if (opts.cafes) kinds.push('cafe', 'bar');
+  return kinds;
 }
 
 // Ask every Overpass mirror at once; the first good answer wins and the rest are cancelled.
@@ -128,20 +136,24 @@ async function overpassElements(q) {
 }
 
 // Fallback when Overpass is down: Nominatim's bounded amenity search. Thinner (50 per query) but it keeps the app usable.
-// Nominatim picks an arbitrary 50 from a big box, so a tight box is searched first to make sure the nearest places are in.
-// Results are reshaped to look like Overpass elements so one parser serves both.
-async function nominatimElements(center, radiusMi, fastFood) {
-  const rings = radiusMi > 4 ? [3, radiusMi] : [radiusMi];
+// Nominatim picks an arbitrary 50 from a big box, so when a type hits that cap a tight box around the center is
+// searched too, which makes sure the nearest places are in. Results are reshaped to look like Overpass elements.
+async function nominatimElements(center, radiusMi, kinds) {
   let answered = false;
   const elements = [];
-  for (const amenity of fastFood ? ['restaurant', 'fast_food'] : ['restaurant']) for (const ring of rings) {
+  const box = ring => {
     const dLat = ring / 69, dLon = ring / (69 * Math.cos(center.lat * Math.PI / 180));
-    const viewbox = [center.lon - dLon, center.lat + dLat, center.lon + dLon, center.lat - dLat].map(n => n.toFixed(5)).join(',');
+    return [center.lon - dLon, center.lat + dLat, center.lon + dLon, center.lat - dLat].map(n => n.toFixed(5)).join(',');
+  };
+  const queries = kinds.map(amenity => [amenity, radiusMi]);
+  while (queries.length) {
+    const [amenity, ring] = queries.shift();
     let hits;
-    try { hits = await nominatim('limit=50&extratags=1&addressdetails=1&bounded=1&amenity=' + amenity + '&viewbox=' + viewbox); }
+    try { hits = await nominatim('limit=50&extratags=1&addressdetails=1&bounded=1&amenity=' + amenity + '&viewbox=' + box(ring)); }
     catch (e) { continue; }
     if (!Array.isArray(hits)) continue;
     answered = true;
+    if (hits.length >= 50 && ring > 4) queries.push([amenity, 3]);
     for (const h of hits) {
       const a = h.address || {}, x = h.extratags || {};
       elements.push({ type: h.osm_type, id: h.osm_id, lat: h.lat, lon: h.lon, tags: {
@@ -153,12 +165,12 @@ async function nominatimElements(center, radiusMi, fastFood) {
   return answered ? elements : null;
 }
 
-async function nearby(center, radiusMi, fastFood) {
+async function nearby(center, radiusMi, opts) {
   const meters = Math.round(radiusMi * 1609.344);
-  const kinds = fastFood ? '^(restaurant|fast_food)$' : '^restaurant$';
-  const q = `[out:json][timeout:15];nwr(around:${meters},${center.lat.toFixed(5)},${center.lon.toFixed(5)})["amenity"~"${kinds}"]["name"];out center tags 600;`;
+  const kinds = kindsFor(opts);
+  const q = `[out:json][timeout:10];nwr(around:${meters},${center.lat.toFixed(5)},${center.lon.toFixed(5)})["amenity"~"^(${kinds.join('|')})$"]["name"];out center tags 900;`;
   let elements = await overpassElements(q);
-  if (!elements) elements = await nominatimElements(center, radiusMi, fastFood);
+  if (!elements) elements = await nominatimElements(center, radiusMi, kinds);
   if (!elements) throw new Problem(502, 'The restaurant lookup is busy right now. Try again in a moment.');
   // One card per restaurant name: chains like Waffle House show up once, at their closest location.
   const best = new Map();
@@ -255,7 +267,7 @@ async function createRound(req, res) {
     if ((typeof where === 'string' ? where : Object.values(where).join('')).length < 3) throw new Problem(400, 'Share your location or type an address first.');
     center = await geocode(where);
   }
-  const found = await nearby(center, radius, body.fastFood === true);
+  const found = await nearby(center, radius, { fastFood: body.fastFood === true, cafes: body.cafes === true });
   if (!found.length) throw new Problem(400, 'No restaurants turned up within ' + radius + ' miles. Try a wider radius.');
   const deck = shuffle(found).slice(0, DECK_SIZE);
   const round = { code: newCode(), radius, deck, ids: new Set(deck.map(r => r.id)), players: new Map(), touched: Date.now() };

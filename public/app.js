@@ -78,7 +78,7 @@
     if (!S.loc && Object.values(addr).join('').length < 3) { say('Share your location or type an address first.'); return; }
     const btn = $('#start'); btn.disabled = true; btn.textContent = 'Finding restaurants…'; say('');
     try {
-      const body = { pid, name: myName(), radius: S.radius, fastFood: $('#fast').checked };
+      const body = { pid, name: myName(), radius: S.radius, fastFood: $('#fast').checked, cafes: $('#cafes').checked };
       if (S.loc) { body.lat = S.loc.lat; body.lon = S.loc.lon; } else Object.assign(body, addr);
       enter(await api('POST', '/api/rounds', body));
     } catch (err) { say(err.error); }
